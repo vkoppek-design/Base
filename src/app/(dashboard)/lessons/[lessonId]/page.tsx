@@ -14,7 +14,7 @@ import { SpecialtyFilter } from "@/components/lesson/specialty-filter";
 import { LessonMaterials } from "@/components/lesson/lesson-materials";
 import { QuizSection } from "@/components/lesson/quiz-section";
 import { filterContentBySpecialty, type Specialty } from "@/lib/specialties";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, getYouTubeEmbedUrl } from "@/lib/utils";
 import type { Lesson, Topic, Progress } from "@/types";
 import {
   ArrowLeft,
@@ -911,7 +911,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
             <div className="mb-8 rounded-2xl overflow-hidden border border-border bg-card">
               <div className="aspect-video">
                 <iframe
-                  src={lesson.video_url}
+                  src={getYouTubeEmbedUrl(lesson.video_url) || lesson.video_url}
                   className="w-full h-full"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen

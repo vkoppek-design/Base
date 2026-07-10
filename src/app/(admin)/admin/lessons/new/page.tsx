@@ -139,8 +139,9 @@ export default function NewLessonPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">Видео URL (YouTube embed)</label>
-          <input type="text" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.youtube.com/embed/..." className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
+          <label className="block text-sm font-medium text-foreground mb-1.5">Видео (ссылка с YouTube)</label>
+          <input type="text" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
+          <p className="text-xs text-muted mt-1.5">Подойдёт любая ссылка на видео — обычная, youtu.be или embed. Платформа сама распознает нужный формат.</p>
         </div>
 
         <div>
