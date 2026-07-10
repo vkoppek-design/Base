@@ -1,0 +1,18 @@
+{
+  "name": "Veronika Koppek — Управленческие навыки",
+  "short_name": "Veronika Koppek",
+  "description": "Платформа для развития управленческих навыков: команда, коммуникация и мотивация",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0A0F0E",
+  "theme_color": "#0A0F0E",
+  "icons": [
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
