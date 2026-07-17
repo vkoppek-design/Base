@@ -11,8 +11,9 @@ interface SubmitResult {
   results: Record<string, { correctOptionIds: string[]; isCorrect: boolean }>;
 }
 
-export function QuizSection({ lessonId }: { lessonId: string }) {
+export function QuizSection({ lessonId, quizId }: { lessonId: string; quizId: string }) {
   const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuizQuestionPublic[]>([]);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -22,11 +23,12 @@ export function QuizSection({ lessonId }: { lessonId: string }) {
   const load = async () => {
     setLoading(true);
     const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch(`/api/quiz/${lessonId}`, {
+    const res = await fetch(`/api/quiz/${lessonId}/${quizId}`, {
       headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
     });
     const json = await res.json();
     if (json.quiz) {
+      setTitle(json.quiz.title || null);
       setQuestions(json.questions || []);
       if (json.previousAttempt) {
         setResult({
@@ -42,7 +44,7 @@ export function QuizSection({ lessonId }: { lessonId: string }) {
 
   useEffect(() => {
     load();
-  }, [lessonId]);
+  }, [lessonId, quizId]);
 
   const toggleAnswer = (questionId: string, optionId: string, type: "single" | "multiple") => {
     setAnswers((prev) => {
@@ -65,7 +67,7 @@ export function QuizSection({ lessonId }: { lessonId: string }) {
           "Content-Type": "application/json",
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({ lessonId, answers }),
+        body: JSON.stringify({ lessonId, quizId, answers }),
       });
       const json = await res.json();
       if (res.ok) setResult(json);
@@ -96,7 +98,7 @@ export function QuizSection({ lessonId }: { lessonId: string }) {
     <div className="mb-8 rounded-2xl border border-border bg-card p-5">
       <div className="flex items-center gap-2 mb-4">
         <ListChecks className="w-5 h-5 text-accent" />
-        <h3 className="text-base font-semibold text-foreground">Тест по уроку</h3>
+        <h3 className="text-base font-semibold text-foreground">{title || "Тест"}</h3>
       </div>
 
       {result && !showFeedback && (

@@ -1,69 +1,28 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Topic } from "@/types";
-import { ArrowLeft, Save, Loader2, Eye, Code, ImagePlus } from "lucide-react";
+import { ArrowLeft, Save, Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import LessonAttachments from "@/components/admin/lesson-attachments";
-import QuizBuilder from "@/components/admin/quiz-builder";
+import RichLessonEditor from "@/components/admin/rich-lesson-editor";
 
 export default function NewLessonPage() {
   const [title, setTitle] = useState("");
   const [topicId, setTopicId] = useState("");
   const [content, setContent] = useState("");
-  const [videoUrl, setVideoUrl] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
   const [durationMinutes, setDurationMinutes] = useState(0);
   const [isPublished, setIsPublished] = useState(false);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
   const editId = searchParams.get("edit");
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file later
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const res = await fetch("/api/admin/upload", {
-        method: "POST",
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
-        body: formData,
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Ошибка загрузки");
-
-      const snippet = `\n![Скриншот](${json.url})\n`;
-      const ta = textareaRef.current;
-      if (ta) {
-        const start = ta.selectionStart ?? content.length;
-        const end = ta.selectionEnd ?? content.length;
-        setContent(content.slice(0, start) + snippet + content.slice(end));
-      } else {
-        setContent((c) => c + snippet);
-      }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Не удалось загрузить изображение");
-    } finally {
-      setUploading(false);
-    }
-  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -77,12 +36,12 @@ export default function NewLessonPage() {
 
       if (editId) {
         setIsEditing(true);
+        setCurrentLessonId(editId);
         const { data: lessonData } = await supabase.from("lessons").select("*").eq("id", editId).single();
         if (lessonData) {
           setTitle(lessonData.title);
           setTopicId(lessonData.topic_id);
           setContent(lessonData.content || "");
-          setVideoUrl(lessonData.video_url || "");
           setSortOrder(lessonData.sort_order);
           setDurationMinutes(lessonData.duration_minutes);
           setIsPublished(lessonData.is_published);
@@ -91,6 +50,7 @@ export default function NewLessonPage() {
     };
 
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -101,19 +61,24 @@ export default function NewLessonPage() {
       title,
       topic_id: topicId,
       content,
-      video_url: videoUrl || null,
       sort_order: sortOrder,
       duration_minutes: durationMinutes,
       is_published: isPublished,
     };
 
-    if (isEditing && editId) {
-      await supabase.from("lessons").update(data).eq("id", editId);
+    if (isEditing && currentLessonId) {
+      await supabase.from("lessons").update(data).eq("id", currentLessonId);
+      setLoading(false);
     } else {
-      await supabase.from("lessons").insert(data);
+      const { data: created, error } = await supabase.from("lessons").insert(data).select("id").single();
+      setLoading(false);
+      if (error || !created) return;
+      // Stay on the page (instead of leaving to the list) so attachments,
+      // tests, and preview unlock immediately without a second save.
+      setIsEditing(true);
+      setCurrentLessonId(created.id);
+      router.replace(`/admin/lessons/new?edit=${created.id}`);
     }
-
-    router.push("/admin/lessons");
   };
 
   return (
@@ -139,50 +104,25 @@ export default function NewLessonPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">Видео (ссылка с YouTube)</label>
-          <input type="text" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.youtube.com/watch?v=..." className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
-          <p className="text-xs text-muted mt-1.5">Подойдёт любая ссылка на видео — обычная, youtu.be или embed. Платформа сама распознает нужный формат.</p>
-        </div>
-
-        <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-sm font-medium text-foreground">Содержание (Markdown)</label>
-            <div className="flex items-center gap-4">
-              <label className={`flex items-center gap-1.5 text-xs transition-colors ${uploading ? "text-muted cursor-wait" : "text-muted hover:text-foreground cursor-pointer"}`}>
-                {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
-                {uploading ? "Загрузка…" : "Загрузить скрин"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={handleImageUpload}
-                  disabled={uploading}
-                  className="hidden"
-                />
-              </label>
-              <button type="button" onClick={() => setShowPreview(!showPreview)} className="flex items-center gap-1.5 text-xs text-muted hover:text-foreground transition-colors cursor-pointer">
-                {showPreview ? <><Code className="w-3.5 h-3.5" />Редактор</> : <><Eye className="w-3.5 h-3.5" />Превью</>}
-              </button>
-            </div>
+            <label className="block text-sm font-medium text-foreground">Содержание урока</label>
+            {currentLessonId && (
+              <Link
+                href={`/admin/lessons/${currentLessonId}/preview`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-muted hover:text-foreground transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Предпросмотр
+              </Link>
+            )}
           </div>
-          {showPreview ? (
-            <div className="min-h-[300px] p-4 rounded-xl bg-input border border-border prose-dark">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || '*Нет содержания*'}</ReactMarkdown>
-            </div>
-          ) : (
-            <textarea ref={textareaRef} value={content} onChange={e => setContent(e.target.value)} placeholder="# Заголовок\n\nТекст урока в формате Markdown..." rows={12} className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors resize-y font-mono" />
+          <RichLessonEditor value={content} onChange={setContent} lessonId={currentLessonId} />
+          {!currentLessonId && (
+            <p className="text-xs text-muted mt-2">Сохраните урок, чтобы прикреплять файлы и тесты, и открыть предпросмотр.</p>
           )}
         </div>
-
-        {isEditing && editId ? (
-          <>
-            <LessonAttachments lessonId={editId} />
-            <QuizBuilder lessonId={editId} />
-          </>
-        ) : (
-          <p className="text-sm text-muted bg-input border border-border rounded-xl px-4 py-3">
-            Прикреплённые файлы и тест можно будет добавить после первого сохранения урока.
-          </p>
-        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -202,10 +142,17 @@ export default function NewLessonPage() {
           <label className="text-sm text-foreground">Опубликовать</label>
         </div>
 
-        <button type="submit" disabled={loading || !title || !topicId} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          {isEditing ? 'Сохранить' : 'Создать'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="submit" disabled={loading || !title || !topicId} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEditing ? 'Сохранить' : 'Создать'}
+          </button>
+          {isEditing && (
+            <Link href="/admin/lessons" className="px-6 py-3 rounded-xl border border-border text-sm text-muted hover:text-foreground transition-colors">
+              Готово
+            </Link>
+          )}
+        </div>
       </form>
     </div>
   );

@@ -56,7 +56,6 @@ export interface Lesson {
   topic_id: string;
   title: string;
   content: string | null;
-  video_url: string | null;
   sort_order: number;
   duration_minutes: number;
   block_name: string | null;
@@ -104,7 +103,6 @@ export type QuizQuestionType = "single" | "multiple";
 
 export interface Quiz {
   id: string;
-  lesson_id: string;
   title: string | null;
   created_at: string;
 }
@@ -147,3 +145,13 @@ export interface QuizAttempt {
   answers: Record<string, string[]>;
   completed_at: string;
 }
+
+// A lesson's stored Markdown is split into this sequence for rendering —
+// see src/lib/lesson-content.ts. `text` blocks are plain Markdown; the
+// other three are inline embeds represented in storage as an HTML-comment
+// marker on its own line (<!-- FILE:id -->, <!-- QUIZ:id -->, <!-- VIDEO:url -->).
+export type LessonBlock =
+  | { type: "text"; markdown: string }
+  | { type: "file"; attachmentId: string }
+  | { type: "quiz"; quizId: string }
+  | { type: "video"; url: string };

@@ -5,8 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 import type { LessonAttachment } from "@/types";
 import { FileText, Download } from "lucide-react";
 
-export function LessonMaterials({ lessonId }: { lessonId: string }) {
-  const [attachments, setAttachments] = useState<LessonAttachment[]>([]);
+// Renders a single downloadable-file card, positioned inline wherever its
+// <!-- FILE:id --> marker appears in the lesson content — see
+// src/components/lesson/lesson-content-renderer.tsx.
+export function LessonFileBlock({ attachmentId }: { attachmentId: string }) {
+  const [attachment, setAttachment] = useState<LessonAttachment | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -14,37 +17,29 @@ export function LessonMaterials({ lessonId }: { lessonId: string }) {
     supabase
       .from("lesson_attachments")
       .select("*")
-      .eq("lesson_id", lessonId)
-      .order("sort_order")
-      .then(({ data }: { data: LessonAttachment[] | null }) => {
-        if (!cancelled) setAttachments(data || []);
+      .eq("id", attachmentId)
+      .maybeSingle()
+      .then(({ data }: { data: LessonAttachment | null }) => {
+        if (!cancelled) setAttachment(data);
       });
     return () => {
       cancelled = true;
     };
-  }, [lessonId]);
+  }, [attachmentId]);
 
-  if (attachments.length === 0) return null;
+  if (!attachment) return null;
 
   return (
-    <div className="mb-8 rounded-2xl border border-border bg-card p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Материалы урока</h3>
-      <div className="space-y-2">
-        {attachments.map((a) => (
-          <a
-            key={a.id}
-            href={a.file_url}
-            download={a.file_name || undefined}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-input border border-border hover:border-accent transition-colors group"
-          >
-            <FileText className="w-4 h-4 text-accent shrink-0" />
-            <span className="flex-1 min-w-0 text-sm text-foreground truncate">{a.title}</span>
-            <Download className="w-4 h-4 text-muted group-hover:text-accent shrink-0 transition-colors" />
-          </a>
-        ))}
-      </div>
-    </div>
+    <a
+      href={attachment.file_url}
+      download={attachment.file_name || undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl bg-card border border-border hover:border-accent transition-colors group"
+    >
+      <FileText className="w-4 h-4 text-accent shrink-0" />
+      <span className="flex-1 min-w-0 text-sm text-foreground truncate">{attachment.title}</span>
+      <Download className="w-4 h-4 text-muted group-hover:text-accent shrink-0 transition-colors" />
+    </a>
   );
 }

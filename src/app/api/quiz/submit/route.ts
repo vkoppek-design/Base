@@ -1,9 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { lessonReferencesQuiz } from "@/lib/lesson-content";
 import { NextResponse } from "next/server";
 
 interface SubmitBody {
   lessonId: string;
+  quizId: string;
   answers: Record<string, string[]>;
 }
 
@@ -24,20 +26,22 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as SubmitBody;
-    const { lessonId, answers } = body;
-    if (!lessonId || !answers) {
+    const { lessonId, quizId, answers } = body;
+    if (!lessonId || !quizId || !answers) {
       return NextResponse.json({ error: "Некорректный запрос" }, { status: 400 });
     }
 
-    // 2. Verify lesson access by re-using the real lessons RLS policy.
+    // 2. Verify lesson access by re-using the real lessons RLS policy, and
+    // that this quiz is actually embedded in that lesson's content (quizzes
+    // have no FK to a lesson — see src/lib/lesson-content.ts).
     const { data: lessonRow } = await supabase
       .from("lessons")
-      .select("id")
+      .select("id, content")
       .eq("id", lessonId)
       .maybeSingle();
 
-    if (!lessonRow) {
-      return NextResponse.json({ error: "Урок недоступен" }, { status: 403 });
+    if (!lessonRow || !lessonReferencesQuiz(lessonRow.content, quizId)) {
+      return NextResponse.json({ error: "Урок или тест недоступны" }, { status: 403 });
     }
 
     // 3. Grade server-side against the real is_correct values — never trust
@@ -46,7 +50,7 @@ export async function POST(request: Request) {
     const { data: quiz } = await adminClient
       .from("quizzes")
       .select("id")
-      .eq("lesson_id", lessonId)
+      .eq("id", quizId)
       .maybeSingle();
 
     if (!quiz) {

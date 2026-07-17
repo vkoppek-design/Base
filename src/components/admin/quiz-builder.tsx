@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/shared/toast-provider";
 import type { QuizQuestionType } from "@/types";
@@ -22,35 +23,28 @@ interface QuestionDraft {
 let localIdCounter = 0;
 const nextLocalId = () => `local-${++localIdCounter}`;
 
-export default function QuizBuilder({ lessonId }: { lessonId: string }) {
-  const [hasQuiz, setHasQuiz] = useState(false);
-  const [quizId, setQuizId] = useState<string | null>(null);
+// Standalone test editor — a quiz is a reusable library entry (no lesson
+// ownership); this component both creates a new one (quizId omitted) and
+// edits an existing one (quizId provided), used by /admin/tests/new.
+export default function QuizBuilder({ quizId }: { quizId?: string }) {
+  const [title, setTitle] = useState("");
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!quizId);
   const [saving, setSaving] = useState(false);
+  const router = useRouter();
   const supabase = createClient();
   const { addToast } = useToast();
 
   useEffect(() => {
+    if (!quizId) return;
     const fetchQuiz = async () => {
-      const { data: quiz } = await supabase
-        .from("quizzes")
-        .select("id")
-        .eq("lesson_id", lessonId)
-        .maybeSingle();
-
-      if (!quiz) {
-        setLoading(false);
-        return;
-      }
-
-      setHasQuiz(true);
-      setQuizId(quiz.id);
+      const { data: quiz } = await supabase.from("quizzes").select("title").eq("id", quizId).maybeSingle();
+      if (quiz) setTitle(quiz.title || "");
 
       const { data: dbQuestions } = await supabase
         .from("quiz_questions")
         .select("id, question, question_type, sort_order, quiz_options(id, option_text, is_correct, sort_order)")
-        .eq("quiz_id", quiz.id)
+        .eq("quiz_id", quizId)
         .order("sort_order");
 
       const drafts: QuestionDraft[] = (dbQuestions || []).map((q: any) => ({
@@ -65,7 +59,7 @@ export default function QuizBuilder({ lessonId }: { lessonId: string }) {
       setLoading(false);
     };
     fetchQuiz();
-  }, [lessonId]);
+  }, [quizId]);
 
   const addQuestion = () => {
     setQuestions((qs) => [
@@ -122,14 +116,13 @@ export default function QuizBuilder({ lessonId }: { lessonId: string }) {
     );
   };
 
-  const enableQuiz = () => {
-    setHasQuiz(true);
-    if (questions.length === 0) addQuestion();
-  };
-
   const handleSave = async () => {
-    if (questions.some((q) => !q.question.trim() || q.options.length < 2 || !q.options.some((o) => o.isCorrect))) {
-      addToast("Каждый вопрос должен иметь текст, минимум 2 варианта и хотя бы один правильный ответ", "error");
+    if (!title.trim()) {
+      addToast("Укажите название теста", "error");
+      return;
+    }
+    if (questions.length === 0 || questions.some((q) => !q.question.trim() || q.options.length < 2 || !q.options.some((o) => o.isCorrect))) {
+      addToast("Добавьте хотя бы один вопрос; у каждого — текст, минимум 2 варианта и хотя бы один правильный ответ", "error");
       return;
     }
 
@@ -137,10 +130,12 @@ export default function QuizBuilder({ lessonId }: { lessonId: string }) {
     try {
       let currentQuizId = quizId;
       if (!currentQuizId) {
-        const { data, error } = await supabase.from("quizzes").insert({ lesson_id: lessonId }).select("id").single();
+        const { data, error } = await supabase.from("quizzes").insert({ title: title.trim() }).select("id").single();
         if (error) throw error;
         currentQuizId = data.id;
-        setQuizId(currentQuizId);
+      } else {
+        const { error } = await supabase.from("quizzes").update({ title: title.trim() }).eq("id", currentQuizId);
+        if (error) throw error;
       }
 
       // Simplest correct strategy for a low-frequency admin action: replace
@@ -170,6 +165,7 @@ export default function QuizBuilder({ lessonId }: { lessonId: string }) {
       }
 
       addToast("Тест сохранён", "success");
+      router.push("/admin/tests");
     } catch (err) {
       addToast(err instanceof Error ? err.message : "Не удалось сохранить тест", "error");
     } finally {
@@ -177,110 +173,93 @@ export default function QuizBuilder({ lessonId }: { lessonId: string }) {
     }
   };
 
-  const handleDeleteQuiz = async () => {
-    if (!quizId || !confirm("Удалить тест целиком?")) return;
-    await supabase.from("quizzes").delete().eq("id", quizId);
-    setQuizId(null);
-    setHasQuiz(false);
-    setQuestions([]);
-  };
-
   if (loading) {
-    return <Loader2 className="w-4 h-4 animate-spin text-muted" />;
+    return <Loader2 className="w-5 h-5 animate-spin text-muted" />;
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <label className="block text-sm font-medium text-foreground">Тест</label>
-        {hasQuiz && (
-          <button type="button" onClick={handleDeleteQuiz} className="text-xs text-error hover:underline cursor-pointer">
-            Удалить тест
-          </button>
-        )}
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <label className="block text-sm font-medium text-foreground mb-1.5">Название теста</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Например: Проверка по теме «Обратная связь»"
+          className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors"
+        />
       </div>
 
-      {!hasQuiz ? (
-        <button
-          type="button"
-          onClick={enableQuiz}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-input border border-border text-sm text-foreground hover:border-accent transition-colors cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          Добавить тест к уроку
-        </button>
-      ) : (
-        <div className="space-y-4">
-          {questions.map((q, qi) => (
-            <div key={q.id} className="p-4 rounded-xl bg-input border border-border space-y-3">
-              <div className="flex items-start gap-2">
-                <span className="text-xs text-muted mt-3 shrink-0">{qi + 1}.</span>
-                <input
-                  type="text"
-                  value={q.question}
-                  onChange={(e) => updateQuestion(q.id, { question: e.target.value })}
-                  placeholder="Текст вопроса"
-                  className="flex-1 px-3 py-2 rounded-lg bg-card border border-border focus:border-accent outline-none text-sm text-foreground placeholder:text-muted-foreground"
-                />
-                <select
-                  value={q.type}
-                  onChange={(e) => updateQuestion(q.id, { type: e.target.value as QuizQuestionType })}
-                  className="px-2 py-2 rounded-lg bg-card border border-border text-xs text-foreground outline-none"
-                >
-                  <option value="single">Один ответ</option>
-                  <option value="multiple">Несколько ответов</option>
-                </select>
-                <button type="button" onClick={() => removeQuestion(q.id)} className="p-2 text-muted hover:text-error cursor-pointer">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5 pl-5">
-                {q.options.map((o) => (
-                  <div key={o.id} className="flex items-center gap-2">
-                    <input
-                      type={q.type === "single" ? "radio" : "checkbox"}
-                      name={`correct-${q.id}`}
-                      checked={o.isCorrect}
-                      onChange={(e) => updateOption(q.id, o.id, { isCorrect: e.target.checked })}
-                      className="accent-accent shrink-0"
-                    />
-                    <input
-                      type="text"
-                      value={o.text}
-                      onChange={(e) => updateOption(q.id, o.id, { text: e.target.value })}
-                      placeholder="Вариант ответа"
-                      className="flex-1 px-3 py-1.5 rounded-lg bg-card border border-border focus:border-accent outline-none text-sm text-foreground placeholder:text-muted-foreground"
-                    />
-                    <button type="button" onClick={() => removeOption(q.id, o.id)} className="p-1 text-muted hover:text-error cursor-pointer">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-                <button type="button" onClick={() => addOption(q.id)} className="text-xs text-accent hover:underline cursor-pointer">
-                  + Добавить вариант
-                </button>
-              </div>
+      <div className="space-y-4">
+        {questions.map((q, qi) => (
+          <div key={q.id} className="p-4 rounded-xl bg-input border border-border space-y-3">
+            <div className="flex items-start gap-2">
+              <span className="text-xs text-muted mt-3 shrink-0">{qi + 1}.</span>
+              <input
+                type="text"
+                value={q.question}
+                onChange={(e) => updateQuestion(q.id, { question: e.target.value })}
+                placeholder="Текст вопроса"
+                className="flex-1 px-3 py-2 rounded-lg bg-card border border-border focus:border-accent outline-none text-sm text-foreground placeholder:text-muted-foreground"
+              />
+              <select
+                value={q.type}
+                onChange={(e) => updateQuestion(q.id, { type: e.target.value as QuizQuestionType })}
+                className="px-2 py-2 rounded-lg bg-card border border-border text-xs text-foreground outline-none"
+              >
+                <option value="single">Один ответ</option>
+                <option value="multiple">Несколько ответов</option>
+              </select>
+              <button type="button" onClick={() => removeQuestion(q.id)} className="p-2 text-muted hover:text-error cursor-pointer">
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
-          ))}
 
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={addQuestion} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground hover:border-accent transition-colors cursor-pointer">
-              <Plus className="w-3.5 h-3.5" />
-              Добавить вопрос
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || questions.length === 0}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-accent-foreground text-xs font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              Сохранить тест
-            </button>
+            <div className="space-y-1.5 pl-5">
+              {q.options.map((o) => (
+                <div key={o.id} className="flex items-center gap-2">
+                  <input
+                    type={q.type === "single" ? "radio" : "checkbox"}
+                    name={`correct-${q.id}`}
+                    checked={o.isCorrect}
+                    onChange={(e) => updateOption(q.id, o.id, { isCorrect: e.target.checked })}
+                    className="accent-accent shrink-0"
+                  />
+                  <input
+                    type="text"
+                    value={o.text}
+                    onChange={(e) => updateOption(q.id, o.id, { text: e.target.value })}
+                    placeholder="Вариант ответа"
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-card border border-border focus:border-accent outline-none text-sm text-foreground placeholder:text-muted-foreground"
+                  />
+                  <button type="button" onClick={() => removeOption(q.id, o.id)} className="p-1 text-muted hover:text-error cursor-pointer">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button type="button" onClick={() => addOption(q.id)} className="text-xs text-accent hover:underline cursor-pointer">
+                + Добавить вариант
+              </button>
+            </div>
           </div>
+        ))}
+
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={addQuestion} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-input border border-border text-xs text-foreground hover:border-accent transition-colors cursor-pointer">
+            <Plus className="w-3.5 h-3.5" />
+            Добавить вопрос
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-accent-foreground text-xs font-medium hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Сохранить тест
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }

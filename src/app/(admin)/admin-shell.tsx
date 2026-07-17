@@ -18,6 +18,7 @@ import {
   Layers,
   Users,
   KeyRound,
+  ListChecks,
 } from "lucide-react";
 
 export default function AdminShell({
@@ -105,6 +106,10 @@ export default function AdminShell({
             <Link href="/admin/lessons" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-foreground hover:bg-sidebar-hover transition-colors" onClick={() => setSidebarOpen(false)}>
               <FileText className="w-4 h-4" />
               Уроки
+            </Link>
+            <Link href="/admin/tests" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-foreground hover:bg-sidebar-hover transition-colors" onClick={() => setSidebarOpen(false)}>
+              <ListChecks className="w-4 h-4" />
+              Тесты
             </Link>
 
             <div className="h-px bg-border my-3" />

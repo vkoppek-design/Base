@@ -11,10 +11,11 @@ import { useProgress } from "@/hooks/use-progress";
 import { useToast } from "@/components/shared/toast-provider";
 import { CodeBlockWrapper } from "@/components/lesson/code-block";
 import { SpecialtyFilter } from "@/components/lesson/specialty-filter";
-import { LessonMaterials } from "@/components/lesson/lesson-materials";
+import { LessonFileBlock } from "@/components/lesson/lesson-materials";
 import { QuizSection } from "@/components/lesson/quiz-section";
 import { filterContentBySpecialty, type Specialty } from "@/lib/specialties";
 import { formatDuration, getYouTubeEmbedUrl } from "@/lib/utils";
+import { parseMarkerLine } from "@/lib/lesson-content";
 import type { Lesson, Topic, Progress } from "@/types";
 import {
   ArrowLeft,
@@ -403,6 +404,35 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
         </span>
       );
     },
+  };
+
+  // A content segment is either plain markdown, or a lone <!-- FILE/QUIZ/VIDEO
+  // --> marker on its own line — render the matching inline embed for those.
+  const renderSegment = (seg: string) => {
+    const marker = parseMarkerLine(seg);
+    if (!marker) {
+      return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          {seg}
+        </ReactMarkdown>
+      );
+    }
+    if (marker.type === "file") return <LessonFileBlock attachmentId={marker.attachmentId} />;
+    if (marker.type === "quiz") return <QuizSection lessonId={lessonId} quizId={marker.quizId} />;
+    const embedUrl = getYouTubeEmbedUrl(marker.url) || marker.url;
+    return (
+      <div className="mb-8 rounded-2xl overflow-hidden border border-border bg-card">
+        <div className="aspect-video">
+          <iframe
+            src={embedUrl}
+            className="w-full h-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            title={lesson?.title || "Видео урока"}
+          />
+        </div>
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -906,23 +936,6 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
             </div>
           )}
 
-          {/* Video Player */}
-          {lesson.video_url && (
-            <div className="mb-8 rounded-2xl overflow-hidden border border-border bg-card">
-              <div className="aspect-video">
-                <iframe
-                  src={getYouTubeEmbedUrl(lesson.video_url) || lesson.video_url}
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  title={lesson.title}
-                />
-              </div>
-            </div>
-          )}
-
-          <LessonMaterials lessonId={lessonId} />
-
           {/* Block indicator (paginated sequential courses) */}
           {paginated && (
             <div className="flex items-center gap-2 text-xs font-semibold text-accent uppercase tracking-wider mb-4">
@@ -930,7 +943,8 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
             </div>
           )}
 
-          {/* Markdown Content */}
+          {/* Content — plain markdown segments, or a file/quiz/video embed for
+              any segment that is a lone <!-- FILE/QUIZ/VIDEO --> marker */}
           {displayContent && (
             <div className="prose-dark mb-8">
               {editing ? (
@@ -938,22 +952,16 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
                   <InsertImageRow onClick={() => handleInsertPick(-1)} disabled={screenshotUploading} />
                   {segments.map((seg, i) => (
                     <Fragment key={i}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                        {seg}
-                      </ReactMarkdown>
+                      {renderSegment(seg)}
                       <InsertImageRow onClick={() => handleInsertPick(i)} disabled={screenshotUploading} />
                     </Fragment>
                   ))}
                 </>
               ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {displayContent}
-                </ReactMarkdown>
+                segments.map((seg, i) => <Fragment key={i}>{renderSegment(seg)}</Fragment>)
               )}
             </div>
           )}
-
-          {(!paginated || safeBlock === blocks.length - 1) && <QuizSection lessonId={lessonId} />}
 
           {/* Mark Complete — always (non-paginated) or on the last block (paginated) */}
           {(!paginated || safeBlock === blocks.length - 1) && (

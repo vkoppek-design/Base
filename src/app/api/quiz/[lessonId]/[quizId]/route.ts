@@ -1,10 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { lessonReferencesQuiz } from "@/lib/lesson-content";
 import { NextResponse } from "next/server";
 
-export async function GET(request: Request, { params }: { params: Promise<{ lessonId: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ lessonId: string; quizId: string }> }) {
   try {
-    const { lessonId } = await params;
+    const { lessonId, quizId } = await params;
 
     // 1. Authenticate the caller (cookie session, or Bearer token fallback)
     const authHeader = request.headers.get("Authorization");
@@ -20,16 +21,18 @@ export async function GET(request: Request, { params }: { params: Promise<{ less
       return NextResponse.json({ error: "Неавторизован" }, { status: 401 });
     }
 
-    // 2. Verify lesson access by re-using the real lessons RLS policy —
-    // if this returns a row, the lesson is visible to the caller.
+    // 2. Verify lesson access by re-using the real lessons RLS policy, and
+    // that this quiz is actually embedded in that lesson's content — quizzes
+    // have no FK to a lesson (they're a reusable library), so the marker
+    // itself is the access-control anchor.
     const { data: lessonRow } = await supabase
       .from("lessons")
-      .select("id")
+      .select("id, content")
       .eq("id", lessonId)
       .maybeSingle();
 
-    if (!lessonRow) {
-      return NextResponse.json({ error: "Урок недоступен" }, { status: 403 });
+    if (!lessonRow || !lessonReferencesQuiz(lessonRow.content, quizId)) {
+      return NextResponse.json({ error: "Тест недоступен" }, { status: 403 });
     }
 
     // 3. Load the quiz via the admin client, stripping is_correct before it
@@ -37,8 +40,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ less
     const adminClient = createAdminClient();
     const { data: quiz } = await adminClient
       .from("quizzes")
-      .select("id, lesson_id, title, created_at")
-      .eq("lesson_id", lessonId)
+      .select("id, title, created_at")
+      .eq("id", quizId)
       .maybeSingle();
 
     if (!quiz) {
