@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { CourseWithTopics, TopicWithProgress } from "@/types";
+import { buildCourseTree } from "@/lib/course-structure";
+import type { CourseWithTopics } from "@/types";
 
 export function useCourses(userId?: string) {
   const [courses, setCourses] = useState<CourseWithTopics[]>([]);
@@ -25,96 +26,51 @@ export function useCourses(userId?: string) {
 
     const fetchCourses = async () => {
       try {
-        console.log("Fetching courses...");
-        // Fetch published courses. RLS automatically filters those the user has access to!
-        const { data: coursesData, error: coursesError } = await supabase
-          .from("courses")
-          .select("*")
-          .eq("is_published", true)
-          .order("created_at");
+        // RLS filters everything down to what the user is enrolled in.
+        const [coursesRes, courseTopicsRes, ctlRes, topicsRes, lessonsRes] = await Promise.all([
+          supabase.from("courses").select("*").eq("is_published", true).order("created_at"),
+          supabase.from("course_topics").select("*"),
+          supabase.from("course_topic_lessons").select("*"),
+          supabase.from("topics").select("*").eq("is_published", true),
+          supabase.from("lessons").select("*").eq("is_published", true),
+        ]);
 
-        console.log("Courses fetched:", coursesData, coursesError);
-        if (coursesError) throw coursesError;
+        if (coursesRes.error) throw coursesRes.error;
 
-        if (!coursesData || coursesData.length === 0) {
-          console.log("No courses found. Returning.");
+        const coursesData = coursesRes.data || [];
+        if (coursesData.length === 0) {
           setCourses([]);
           return;
         }
 
-        console.log("Fetching topics...");
-        // Fetch published topics. RLS handles access control.
-        const { data: topicsData, error: topicsError } = await supabase
-          .from("topics")
-          .select("*")
-          .eq("is_published", true)
-          .order("sort_order");
-
-        console.log("Topics fetched:", topicsData, topicsError);
-        if (topicsError) throw topicsError;
-
-        console.log("Fetching lessons...");
-        // Fetch published lessons. RLS handles access control.
-        const { data: lessonsData, error: lessonsError } = await supabase
-          .from("lessons")
-          .select("*")
-          .eq("is_published", true)
-          .order("sort_order");
-          
-        console.log("Lessons fetched:", lessonsData, lessonsError);
-
-        // Fetch progress if user is logged in
-        let progressData: { lesson_id: string }[] = [];
+        // Fetch completed progress if user is logged in
+        let completedIds = new Set<string>();
         if (userId) {
           const { data } = await supabase
             .from("progress")
             .select("lesson_id")
             .eq("user_id", userId)
             .eq("completed", true);
-          progressData = data || [];
+          completedIds = new Set((data || []).map((p: { lesson_id: string }) => p.lesson_id));
         }
 
-        const completedLessonIds = new Set(progressData.map((p) => p.lesson_id));
-
-        // Group into topics with progress
-        const topicsWithProgress: TopicWithProgress[] = (topicsData || []).map((topic: any) => {
-          const topicLessons = (lessonsData || []).filter(
-            (l: any) => l.topic_id === topic.id
-          );
-          return {
-            ...topic,
-            lessons: topicLessons,
-            totalLessons: topicLessons.length,
-            completedLessons: topicLessons.filter((l: any) =>
-              completedLessonIds.has(l.id)
-            ).length,
-          };
-        });
-
-        // Group into courses
-        const coursesWithTopics: CourseWithTopics[] = coursesData.map((course: any) => {
-          const courseTopics = topicsWithProgress.filter((t: any) => t.course_id === course.id);
-          const totalTopics = courseTopics.length;
-          const completedTopics = courseTopics.filter(
-            (t: any) => t.totalLessons > 0 && t.completedLessons === t.totalLessons
-          ).length;
-
-          return {
-            ...course,
-            topics: courseTopics,
-            totalTopics,
-            completedTopics,
-          };
+        const coursesWithTopics = buildCourseTree({
+          courses: coursesData,
+          courseTopics: courseTopicsRes.data || [],
+          courseTopicLessons: ctlRes.data || [],
+          topics: topicsRes.data || [],
+          lessons: lessonsRes.data || [],
+          completedIds,
         });
 
         setCourses(coursesWithTopics);
-        
+
         // Save to cache
         if (typeof window !== "undefined") {
           localStorage.setItem("lms-courses-cache", JSON.stringify(coursesWithTopics));
         }
-      } catch (error: any) {
-        console.error("Error fetching courses:", error.message, error);
+      } catch (error) {
+        console.error("Error fetching courses:", error instanceof Error ? error.message : error);
       } finally {
         setLoading(false);
       }

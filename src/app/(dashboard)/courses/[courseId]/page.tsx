@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useUser } from "@/hooks/use-user";
 import { useCourses } from "@/hooks/use-courses";
 import { calculateProgress } from "@/lib/utils";
+import { flattenCourseLessons } from "@/lib/course-structure";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/shared/toast-provider";
 import {
@@ -20,7 +21,6 @@ import {
   Layers,
   ArrowRight,
   Sparkles,
-  Loader2,
   Lock,
   Clock,
 } from "lucide-react";
@@ -61,9 +61,8 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
 
   const course = courses.find((c) => c.id === courseId);
 
-  // All Hooks must be declared at the top level
-  const [accessibleLessons, setAccessibleLessons] = useState<Set<string>>(new Set());
-  const [accessLoading, setAccessLoading] = useState(false);
+  // Completed lesson ids drive sequential unlock (previous lesson completed).
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!loading && !course) {
@@ -72,29 +71,24 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
   }, [loading, course, router]);
 
   useEffect(() => {
-    if (course?.sequential_access && user?.id) {
-      setAccessLoading(true);
-      const fetchAccess = async () => {
-        try {
-          const { data, error } = await supabase
-            .from("user_lesson_access")
-            .select("lesson_id")
-            .eq("user_id", user.id);
+    if (!user?.id) return;
+    supabase
+      .from("progress")
+      .select("lesson_id")
+      .eq("user_id", user.id)
+      .eq("completed", true)
+      .then(({ data }: { data: { lesson_id: string }[] | null }) => {
+        setCompletedIds(new Set((data || []).map((r) => r.lesson_id)));
+      });
+  }, [user?.id, supabase]);
 
-          if (error) throw error;
-          const ids = (data || []).map((r: any) => r.lesson_id);
-          setAccessibleLessons(new Set(ids));
-        } catch (err) {
-          console.error("Error loading lesson access:", err);
-        } finally {
-          setAccessLoading(false);
-        }
-      };
-      fetchAccess();
-    } else {
-      setAccessLoading(false);
-    }
-  }, [course?.sequential_access, user?.id, supabase]);
+  // In course order, a lesson is unlocked when it's first or the previous
+  // lesson is completed. Admins and non-sequential courses: everything open.
+  const isUnlockedAt = (idx: number, flat: { id: string }[]) => {
+    if (isAdmin || !course?.sequential_access) return true;
+    if (idx <= 0) return true;
+    return completedIds.has(flat[idx - 1].id);
+  };
 
   if (loading) {
     return (
@@ -116,25 +110,17 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
   if (!course) return null;
 
   const progress = calculateProgress(course.completedTopics, course.totalTopics);
-  
-  // Find first uncompleted lesson across all topics
-  const nextLesson = course.topics
-    .flatMap((t) =>
-      t.lessons.map((l, i) => ({
-        ...l,
-        topicTitle: t.title,
-        isCompleted: i < t.completedLessons,
-      }))
-    )
-    .find((l) => {
-      if (course.sequential_access && !isAdmin) {
-        return accessibleLessons.has(l.id) && !l.isCompleted;
-      }
-      return !l.isCompleted;
-    });
 
-  // Flat list of lessons for sequential courses
-  const allLessons = course.topics.flatMap(t => t.lessons);
+  // Flat list of lessons in course order
+  const allLessons = flattenCourseLessons(course);
+  const lessonHref = (lessonId: string) => `/lessons/${lessonId}?course=${course.id}`;
+  const topicTitleByLesson = (lessonId: string) =>
+    course.topics.find((t) => t.lessons.some((l) => l.id === lessonId))?.title || "";
+
+  // First lesson that is both unlocked and not yet completed — "continue here".
+  const nextLesson = allLessons.find(
+    (l, i) => isUnlockedAt(i, allLessons) && !completedIds.has(l.id)
+  );
 
   return (
     <div className="p-4 lg:p-8 max-w-6xl mx-auto animate-fade-in">
@@ -179,9 +165,9 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
       </div>
 
       {/* Continue Banner */}
-      {nextLesson && (!course.sequential_access || isAdmin || accessibleLessons.has(nextLesson.id)) && (
+      {nextLesson && (
         <Link
-          href={`/lessons/${nextLesson.id}`}
+          href={lessonHref(nextLesson.id)}
           className="block mb-8 group"
         >
           <div className="bg-gradient-to-r from-accent/10 via-accent/5 to-transparent rounded-2xl border border-accent/20 p-6 hover:border-accent/40 transition-all duration-300">
@@ -193,7 +179,7 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                 <div>
                   <p className="text-xs text-accent font-medium mb-1">Продолжить обучение</p>
                   <p className="text-foreground font-semibold">{nextLesson.title}</p>
-                  <p className="text-sm text-muted">{nextLesson.topicTitle}</p>
+                  <p className="text-sm text-muted">{topicTitleByLesson(nextLesson.id)}</p>
                 </div>
               </div>
               <ArrowRight className="w-5 h-5 text-accent group-hover:translate-x-1 transition-transform" />
@@ -206,11 +192,7 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
         // Sequential course lesson view (8 premium lesson tiles)
         <div className="space-y-6">
           <h2 className="text-xl font-semibold text-foreground mb-6">Программа курса</h2>
-          {accessLoading ? (
-            <div className="flex justify-center p-12">
-              <Loader2 className="w-8 h-8 animate-spin text-accent" />
-            </div>
-          ) : allLessons.length === 0 ? (
+          {allLessons.length === 0 ? (
             <div className="text-center py-16">
               <div className="w-16 h-16 rounded-2xl bg-card flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-muted" />
@@ -220,11 +202,8 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {allLessons.map((lesson, idx) => {
-                const isUnlocked = idx === 0 || isAdmin || accessibleLessons.has(lesson.id);
-                // Check if completed in course cache
-                const topicForLesson = course.topics.find(t => t.id === lesson.topic_id);
-                const lessonIdxInTopic = topicForLesson?.lessons.findIndex(l => l.id === lesson.id) ?? -1;
-                const isCompleted = lessonIdxInTopic !== -1 && lessonIdxInTopic < (topicForLesson?.completedLessons ?? 0);
+                const isUnlocked = isUnlockedAt(idx, allLessons);
+                const isCompleted = completedIds.has(lesson.id);
 
                 const cardContent = (
                   <div className={`bg-card rounded-2xl border p-6 transition-all duration-300 relative overflow-hidden h-full flex flex-col justify-between ${
@@ -280,11 +259,11 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                 );
 
                 return isUnlocked ? (
-                  <Link href={`/lessons/${lesson.id}`} key={lesson.id} className="block group h-full">
+                  <Link href={lessonHref(lesson.id)} key={lesson.id} className="block group h-full">
                     {cardContent}
                   </Link>
                 ) : (
-                  <div key={lesson.id} className="h-full" onClick={() => addToast("Урок заблокирован. Ожидайте открытия преподавателем.", "info")}>
+                  <div key={lesson.id} className="h-full" onClick={() => addToast("Урок откроется после прохождения предыдущего.", "info")}>
                     {cardContent}
                   </div>
                 );
@@ -339,9 +318,9 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                           key={topic.id}
                           href={
                             firstIncomplete
-                              ? `/lessons/${firstIncomplete.id}`
+                              ? lessonHref(firstIncomplete.id)
                               : topic.lessons[0]
-                              ? `/lessons/${topic.lessons[0].id}`
+                              ? lessonHref(topic.lessons[0].id)
                               : `/courses/${course.id}`
                           }
                           className="group"

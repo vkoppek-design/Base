@@ -15,7 +15,7 @@ export default function TopicsListPage() {
     const { data } = await supabase
       .from("topics")
       .select("*")
-      .order("sort_order");
+      .order("title");
     setTopics(data || []);
     setLoading(false);
   };

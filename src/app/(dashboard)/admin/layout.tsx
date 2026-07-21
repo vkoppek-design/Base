@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/hooks/use-user";
-import { Users, Layers, KeyRound, FolderOpen, FileText } from "lucide-react";
+import { Users, Layers, FolderOpen, FileText } from "lucide-react";
 import { useEffect } from "react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -51,18 +51,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               }`}
             >
               <Layers className="w-4 h-4" />
-              Курсы и доступы
-            </Link>
-            <Link
-              href="/admin/lesson-access"
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
-                pathname === "/admin/lesson-access"
-                  ? "bg-accent/10 text-accent border border-accent/20"
-                  : "text-muted hover:text-foreground hover:bg-card-hover border border-transparent"
-              }`}
-            >
-              <KeyRound className="w-4 h-4" />
-              Доступ к урокам
+              Курсы
             </Link>
 
             <div className="h-px bg-border my-2" />

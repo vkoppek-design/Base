@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use, useMemo, useRef, Fragment } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +16,7 @@ import { QuizSection } from "@/components/lesson/quiz-section";
 import { filterContentBySpecialty, type Specialty } from "@/lib/specialties";
 import { formatDuration, getYouTubeEmbedUrl } from "@/lib/utils";
 import { parseMarkerLine } from "@/lib/lesson-content";
+import { buildCourseTree } from "@/lib/course-structure";
 import type { Lesson, Topic, Progress } from "@/types";
 import {
   ArrowLeft,
@@ -108,6 +109,9 @@ const nodeToText = (node: React.ReactNode): string => {
 
 export default function LessonPage({ params }: { params: Promise<{ lessonId: string }> }) {
   const { lessonId } = use(params);
+  const searchParams = useSearchParams();
+  const courseCtxId = searchParams.get("course");
+  const courseHref = courseCtxId ? `?course=${courseCtxId}` : "";
   const [lesson, setLesson] = useState<LessonWithTopic | null>(null);
   const [topics, setTopics] = useState<TopicWithLessons[]>([]);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -467,55 +471,41 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
         }
         const completedSet = new Set(completedIds);
         
-        // Find the lesson first to identify the course
+        // Pick the course context: the ?course= course if given, else the
+        // first cached course that contains this lesson.
+        const candidateCourses = courseCtxId
+          ? cachedCourses.filter((c: any) => c.id === courseCtxId)
+          : cachedCourses;
+
         let foundLesson: LessonWithTopic | null = null;
-        let targetCourseId: string | null = null;
-        
-        for (const course of cachedCourses) {
+        let targetCourse: any = null;
+
+        for (const course of candidateCourses) {
           if (!course.topics || !Array.isArray(course.topics)) continue;
-          
           for (const topic of course.topics) {
             const matchingLesson = (topic.lessons || []).find((l: any) => l.id === lessonId);
             if (matchingLesson) {
-              foundLesson = {
-                ...matchingLesson,
-                topic: { ...topic },
-              };
-              targetCourseId = course.id;
+              foundLesson = { ...matchingLesson, topic: { ...topic } };
+              targetCourse = course;
               break;
             }
           }
           if (foundLesson) break;
         }
-        
-        if (!foundLesson) {
+
+        if (!foundLesson || !targetCourse) {
           return false;
         }
-        
-        // Load only the topics from the current course
-        const allTopics: TopicWithLessons[] = [];
-        const targetCourse = cachedCourses.find((c: any) => c.id === targetCourseId);
-        if (targetCourse && Array.isArray(targetCourse.topics)) {
-          for (const topic of targetCourse.topics) {
-            const topicLessons = (topic.lessons || []).map((l: any) => ({
-              ...l,
-              completed: completedSet.has(l.id),
-            }));
-            
-            const topicWithLessons: TopicWithLessons = {
-              ...topic,
-              lessons: topicLessons,
-            };
-            
-            allTopics.push(topicWithLessons);
-          }
-        }
-        
-        // Order topics by sort_order
-        allTopics.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-        
+
+        // Topics are already course-ordered in the cache (built by useCourses).
+        const allTopics: TopicWithLessons[] = (targetCourse.topics || []).map((topic: any) => ({
+          ...topic,
+          lessons: (topic.lessons || []).map((l: any) => ({ ...l, completed: completedSet.has(l.id) })),
+        }));
+
         setLesson(foundLesson);
         setTopics(allTopics);
+        setSequentialAccess(!!targetCourse.sequential_access);
         setIsCompleted(completedSet.has(lessonId));
         
         // Expand current topic
@@ -547,10 +537,10 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
       }
       
       try {
-        // Fetch current lesson with topic
+        // Fetch the current lesson (content included).
         const { data: lessonData, error: lessonError } = await supabase
           .from("lessons")
-          .select("*, topic:topics(*)")
+          .select("*")
           .eq("id", lessonId)
           .single();
 
@@ -558,52 +548,51 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
           console.warn("Supabase failed to fetch lesson, checking cache...", lessonError);
           const success = loadFromCache();
           if (success) return;
-          
           router.push("/dashboard");
           return;
         }
 
-        const resolvedTopic = Array.isArray(lessonData.topic) ? lessonData.topic[0] : lessonData.topic;
-        const currentCourseId = resolvedTopic?.course_id;
-
-        setLesson({
-          ...lessonData,
-          topic: resolvedTopic,
-        } as LessonWithTopic);
-
-        // Fetch topics for current course
-        const topicsQuery = supabase
-          .from("topics")
-          .select("*")
-          .eq("is_published", true)
-          .order("sort_order");
-
-        if (currentCourseId) {
-          topicsQuery.eq("course_id", currentCourseId);
+        // Determine which course provides the ordering/gating context: the
+        // ?course= course if present, else any course containing this lesson.
+        let ctxCourseId: string | null = courseCtxId;
+        if (!ctxCourseId) {
+          const { data: ctlForLesson } = await supabase
+            .from("course_topic_lessons")
+            .select("course_topic_id")
+            .eq("lesson_id", lessonId);
+          const ctIdsForLesson = (ctlForLesson || []).map((r: any) => r.course_topic_id);
+          if (ctIdsForLesson.length) {
+            const { data: cts } = await supabase
+              .from("course_topics")
+              .select("course_id")
+              .in("id", ctIdsForLesson)
+              .limit(1);
+            ctxCourseId = cts?.[0]?.course_id ?? null;
+          }
         }
 
-        const { data: topicsData, error: topicsError } = await topicsQuery;
-
-        // Fetch lessons for the topics of current course
-        let lessonsData: any[] = [];
-        let lessonsError: any = null;
-
-        if (topicsData && topicsData.length > 0) {
-          const topicIds = topicsData.map((t: any) => t.id);
-          const { data, error } = await supabase
-            .from("lessons")
-            .select("*")
-            .eq("is_published", true)
-            .in("topic_id", topicIds)
-            .order("sort_order");
-          lessonsData = data || [];
-          lessonsError = error;
-        }
-
-        if (topicsError || lessonsError) {
-          console.warn("Supabase failed to fetch topics/lessons, checking cache...", topicsError || lessonsError);
-          const success = loadFromCache();
-          if (success) return;
+        // Fetch that course's structure rows (RLS scopes to what's visible).
+        let courseRow: any = null;
+        let ctRows: any[] = [];
+        let ctlRows: any[] = [];
+        let topicsAll: any[] = [];
+        let lessonsAll: any[] = [];
+        if (ctxCourseId) {
+          const [courseRes, ctRes, topicsRes, lessonsRes] = await Promise.all([
+            supabase.from("courses").select("*").eq("id", ctxCourseId).single(),
+            supabase.from("course_topics").select("*").eq("course_id", ctxCourseId).order("sort_order"),
+            supabase.from("topics").select("*"),
+            supabase.from("lessons").select("*"),
+          ]);
+          courseRow = courseRes.data;
+          ctRows = ctRes.data || [];
+          topicsAll = topicsRes.data || [];
+          lessonsAll = lessonsRes.data || [];
+          const ctIds2 = ctRows.map((c: any) => c.id);
+          if (ctIds2.length) {
+            const { data } = await supabase.from("course_topic_lessons").select("*").in("course_topic_id", ctIds2);
+            ctlRows = data || [];
+          }
         }
 
         // Fetch progress
@@ -640,45 +629,40 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
           }
         }
 
-        // Fetch lesson access for verification if it is a sequential access course
-        const { data: courseData, error: cErr } = await supabase
-          .from("courses")
-          .select("sequential_access")
-          .eq("id", currentCourseId)
-          .single();
-
-        setSequentialAccess(!!courseData?.sequential_access);
-
-        if (!cErr && courseData?.sequential_access && lessonData.sort_order !== 1 && profile?.role !== "admin") {
-          const { data: accessData, error: accessErr } = await supabase
-            .from("user_lesson_access")
-            .select("id")
-            .eq("user_id", user.id)
-            .eq("lesson_id", lessonId)
-            .maybeSingle();
-
-          if (accessErr || !accessData) {
-            console.warn("User does not have access to this lesson");
-            router.push("/dashboard");
-            return;
-          }
-        }
-
         const completedIds = new Set(progressData.filter(p => p.completed).map(p => p.lesson_id));
         setIsCompleted(completedIds.has(lessonId));
-        const topicsWithLessons: TopicWithLessons[] = (topicsData || []).map((topic: any) => ({
-          ...topic,
-          lessons: (lessonsData || [])
-            .filter((l: any) => l.topic_id === topic.id)
-            .map((l: any) => ({ ...l, completed: completedIds.has(l.id) })),
-        }));
 
+        // Build the ordered course tree and derive the sidebar + gating context.
+        let topicsWithLessons: TopicWithLessons[] = [];
+        let homeTopic: Topic | undefined;
+        if (courseRow) {
+          const [tree] = buildCourseTree({
+            courses: [courseRow],
+            courseTopics: ctRows,
+            courseTopicLessons: ctlRows,
+            topics: topicsAll,
+            lessons: lessonsAll,
+            completedIds,
+          });
+          setSequentialAccess(!!tree?.sequential_access);
+          topicsWithLessons = (tree?.topics || []).map((t) => ({
+            ...t,
+            lessons: t.lessons.map((l) => ({ ...l, completed: completedIds.has(l.id) })),
+          }));
+          homeTopic = tree?.topics.find((t) => t.lessons.some((l) => l.id === lessonId));
+        }
+
+        // Fall back to the lesson's own topic for the header/breadcrumb if it
+        // isn't part of the resolved course.
+        if (!homeTopic && lessonData.topic_id) {
+          const { data: ownTopic } = await supabase.from("topics").select("*").eq("id", lessonData.topic_id).single();
+          if (ownTopic) homeTopic = ownTopic as Topic;
+        }
+
+        setLesson({ ...lessonData, topic: homeTopic || ({ id: "", title: "" } as Topic) } as LessonWithTopic);
         setTopics(topicsWithLessons);
 
-        // Expand the current topic
-        const currentTopic = topicsWithLessons.find(t => 
-          t.lessons.some(l => l.id === lessonId)
-        );
+        const currentTopic = topicsWithLessons.find((t) => t.lessons.some((l) => l.id === lessonId));
         if (currentTopic) {
           setExpandedTopics(new Set([currentTopic.id]));
         }
@@ -692,6 +676,19 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
 
     fetchData();
   }, [lessonId, user?.id, userLoading, profile?.role]);
+
+  // Client-side sequential gate: if this lesson is locked in the course order
+  // (the previous lesson isn't completed), send the student back to the course.
+  useEffect(() => {
+    if (loading || !lesson || profile?.role === "admin" || !sequentialAccess) return;
+    const flat = topics.flatMap((t) => t.lessons);
+    const idx = flat.findIndex((l) => l.id === lessonId);
+    if (idx > 0 && !flat[idx - 1].completed) {
+      addToast("Урок откроется после прохождения предыдущего.", "info");
+      router.push(courseCtxId ? `/courses/${courseCtxId}` : "/dashboard");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, lesson, topics, sequentialAccess, lessonId]);
 
   const handleToggleComplete = async () => {
     if (isCompleted) {
@@ -773,7 +770,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
         <div className="p-4">
           {sequentialAccess ? (
             <Link
-              href={lesson.topic?.course_id ? `/courses/${lesson.topic.course_id}` : "/dashboard"}
+              href={courseCtxId ? `/courses/${courseCtxId}` : "/dashboard"}
               className="flex items-center gap-2 text-sm text-muted hover:text-foreground transition-colors mb-6"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -848,7 +845,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
                           {blockLessons.map(l => (
                             <Link
                               key={l.id}
-                              href={`/lessons/${l.id}`}
+                              href={`/lessons/${l.id}${courseHref}`}
                               onClick={() => setSidebarOpen(false)}
                               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
                                 l.id === lessonId
@@ -993,7 +990,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
               <button
                 onClick={() => {
                   if (safeBlock > 0) setActiveBlock(safeBlock - 1);
-                  else if (prevLesson) router.push(`/lessons/${prevLesson.id}`);
+                  else if (prevLesson) router.push(`/lessons/${prevLesson.id}${courseHref}`);
                 }}
                 disabled={safeBlock === 0 && !prevLesson}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-muted hover:text-foreground hover:bg-card-hover border border-border transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
@@ -1016,7 +1013,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
                 </button>
               ) : nextLesson ? (
                 <Link
-                  href={`/lessons/${nextLesson.id}`}
+                  href={`/lessons/${nextLesson.id}${courseHref}`}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm bg-accent/10 text-accent hover:bg-accent/20 border border-accent/20 transition-colors"
                 >
                   <span className="hidden sm:inline">Следующий урок</span>
@@ -1037,7 +1034,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
             <div className="flex items-center justify-between pb-8">
               {prevLesson ? (
                 <Link
-                  href={`/lessons/${prevLesson.id}`}
+                  href={`/lessons/${prevLesson.id}${courseHref}`}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-muted hover:text-foreground hover:bg-card-hover border border-border transition-colors"
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -1048,7 +1045,7 @@ export default function LessonPage({ params }: { params: Promise<{ lessonId: str
 
               {nextLesson ? (
                 <Link
-                  href={`/lessons/${nextLesson.id}`}
+                  href={`/lessons/${nextLesson.id}${courseHref}`}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm bg-accent/10 text-accent hover:bg-accent/20 border border-accent/20 transition-colors"
                 >
                   <span className="hidden sm:inline">{nextLesson.title}</span>

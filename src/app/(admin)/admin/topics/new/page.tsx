@@ -5,10 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { TOPIC_GRADIENTS } from "@/lib/constants";
 import { useToast } from "@/components/shared/toast-provider";
-import type { Course, Lesson } from "@/types";
-import { ArrowLeft, Save, Loader2, ArrowUp, ArrowDown, X, Plus } from "lucide-react";
+import type { Lesson, Topic } from "@/types";
+import { ArrowLeft, Save, Loader2, X, Plus } from "lucide-react";
 import Link from "next/link";
 
+// A topic is just a bag of lessons — no ordering here. Which lessons a course
+// includes and in what order is decided in the course editor.
 function TopicLessons({ topicId }: { topicId: string }) {
   const [assigned, setAssigned] = useState<Lesson[]>([]);
   const [available, setAvailable] = useState<Lesson[]>([]);
@@ -19,7 +21,7 @@ function TopicLessons({ topicId }: { topicId: string }) {
 
   const fetchLessons = async () => {
     const [assignedRes, availableRes] = await Promise.all([
-      supabase.from("lessons").select("*").eq("topic_id", topicId).order("sort_order"),
+      supabase.from("lessons").select("*").eq("topic_id", topicId).order("title"),
       supabase.from("lessons").select("*").or(`topic_id.is.null,topic_id.neq.${topicId}`).order("title"),
     ]);
     setAssigned(assignedRes.data || []);
@@ -34,8 +36,7 @@ function TopicLessons({ topicId }: { topicId: string }) {
 
   const addLesson = async () => {
     if (!pickedId) return;
-    const nextSortOrder = assigned.length ? Math.max(...assigned.map((l) => l.sort_order)) + 1 : 0;
-    const { error } = await supabase.from("lessons").update({ topic_id: topicId, sort_order: nextSortOrder }).eq("id", pickedId);
+    const { error } = await supabase.from("lessons").update({ topic_id: topicId }).eq("id", pickedId);
     if (error) {
       addToast("Не удалось добавить урок", "error");
       return;
@@ -49,35 +50,19 @@ function TopicLessons({ topicId }: { topicId: string }) {
     fetchLessons();
   };
 
-  const moveLesson = async (index: number, direction: -1 | 1) => {
-    const other = assigned[index + direction];
-    if (!other) return;
-    const current = assigned[index];
-    await Promise.all([
-      supabase.from("lessons").update({ sort_order: other.sort_order }).eq("id", current.id),
-      supabase.from("lessons").update({ sort_order: current.sort_order }).eq("id", other.id),
-    ]);
-    fetchLessons();
-  };
-
   if (loading) return <Loader2 className="w-4 h-4 animate-spin text-muted" />;
 
   return (
     <div>
-      <label className="block text-sm font-medium text-foreground mb-1.5">Уроки в теме</label>
+      <label className="block text-sm font-medium text-foreground mb-1.5">Уроки темы</label>
+      <p className="text-xs text-muted mb-3">Отметьте, какие уроки относятся к теме. Порядок и выбор для конкретного курса задаётся в настройках курса.</p>
       <div className="space-y-2 mb-3">
         {assigned.length === 0 ? (
           <p className="text-sm text-muted">В этой теме пока нет уроков</p>
         ) : (
-          assigned.map((lesson, i) => (
+          assigned.map((lesson) => (
             <div key={lesson.id} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-input border border-border">
               <span className="flex-1 text-sm text-foreground truncate">{lesson.title}</span>
-              <button type="button" onClick={() => moveLesson(i, -1)} disabled={i === 0} className="p-1.5 rounded-lg text-muted hover:text-foreground disabled:opacity-30 cursor-pointer">
-                <ArrowUp className="w-3.5 h-3.5" />
-              </button>
-              <button type="button" onClick={() => moveLesson(i, 1)} disabled={i === assigned.length - 1} className="p-1.5 rounded-lg text-muted hover:text-foreground disabled:opacity-30 cursor-pointer">
-                <ArrowDown className="w-3.5 h-3.5" />
-              </button>
               <button type="button" onClick={() => removeLesson(lesson.id)} className="p-1.5 rounded-lg text-muted hover:text-error hover:bg-error/10 cursor-pointer">
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -108,10 +93,7 @@ export default function NewTopicPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [icon, setIcon] = useState("BookOpen");
-  const [gradient, setGradient] = useState(TOPIC_GRADIENTS[0]);
-  const [courseId, setCourseId] = useState("");
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [sortOrder, setSortOrder] = useState(0);
+  const [gradient, setGradient] = useState<string>(TOPIC_GRADIENTS[0]);
   const [isPublished, setIsPublished] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -121,43 +103,25 @@ export default function NewTopicPage() {
   const editId = searchParams.get("edit");
 
   useEffect(() => {
-    const fetchCourses = async () => {
-      const { data } = await supabase.from("courses").select("*").order("created_at");
+    if (!editId) return;
+    setIsEditing(true);
+    supabase.from("topics").select("*").eq("id", editId).single().then(({ data }: { data: Topic | null }) => {
       if (data) {
-        setCourses(data);
-        if (data.length > 0 && !courseId) {
-          setCourseId(data[0].id);
-        }
+        setTitle(data.title);
+        setDescription(data.description || "");
+        setIcon(data.icon);
+        setGradient(data.gradient);
+        setIsPublished(data.is_published);
       }
-    };
-    fetchCourses();
-  }, []);
-
-  useEffect(() => {
-    if (editId) {
-      setIsEditing(true);
-      const fetchData = async () => {
-        const { data } = await supabase.from("topics").select("*").eq("id", editId).single();
-        if (data) {
-          setTitle(data.title);
-          setDescription(data.description || "");
-          setIcon(data.icon);
-          setGradient(data.gradient);
-          setCourseId(data.course_id);
-          setSortOrder(data.sort_order);
-          setIsPublished(data.is_published);
-        }
-      };
-      fetchData();
-    }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!courseId) return;
     setLoading(true);
 
-    const data = { title, description, icon, gradient, course_id: courseId, sort_order: sortOrder, is_published: isPublished };
+    const data = { title, description, icon, gradient, is_published: isPublished };
 
     if (isEditing && editId) {
       await supabase.from("topics").update(data).eq("id", editId);
@@ -179,29 +143,12 @@ export default function NewTopicPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
           <label className="block text-sm font-medium text-foreground mb-1.5">Название</label>
-          <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Например: Промпт-инжиниринг" required className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
+          <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Например: Работа с командой" required className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
         </div>
 
         <div>
           <label className="block text-sm font-medium text-foreground mb-1.5">Описание</label>
           <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Краткое описание темы..." rows={3} className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors resize-none" />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">Курс</label>
-          {courses.length === 0 ? (
-            <p className="text-sm text-muted">
-              Курсов пока нет.{" "}
-              <Link href="/admin/courses/new" className="text-accent hover:underline">
-                Сначала создайте курс
-              </Link>
-              .
-            </p>
-          ) : (
-            <select value={courseId} onChange={e => setCourseId(e.target.value)} required className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground transition-colors">
-              {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-            </select>
-          )}
         </div>
 
         <div>
@@ -215,11 +162,6 @@ export default function NewTopicPage() {
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1.5">Порядок сортировки</label>
-          <input type="number" value={sortOrder} onChange={e => setSortOrder(Number(e.target.value))} className="w-24 px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground transition-colors" />
-        </div>
-
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setIsPublished(!isPublished)} className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${isPublished ? 'bg-accent' : 'bg-border'}`}>
             <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${isPublished ? 'translate-x-5' : ''}`} />
@@ -227,7 +169,7 @@ export default function NewTopicPage() {
           <label className="text-sm text-foreground">Опубликовать</label>
         </div>
 
-        <button type="submit" disabled={loading || !title || !courseId} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
+        <button type="submit" disabled={loading || !title} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {isEditing ? 'Сохранить' : 'Создать'}
         </button>

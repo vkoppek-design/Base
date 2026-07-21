@@ -17,7 +17,6 @@ import {
   ArrowLeft,
   Layers,
   Users,
-  KeyRound,
   ListChecks,
 } from "lucide-react";
 
@@ -116,15 +115,11 @@ export default function AdminShell({
 
             <Link href="/admin/courses" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-foreground hover:bg-sidebar-hover transition-colors" onClick={() => setSidebarOpen(false)}>
               <Layers className="w-4 h-4" />
-              Курсы и доступы
+              Курсы
             </Link>
             <Link href="/admin/users" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-foreground hover:bg-sidebar-hover transition-colors" onClick={() => setSidebarOpen(false)}>
               <Users className="w-4 h-4" />
               Пользователи
-            </Link>
-            <Link href="/admin/lesson-access" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-foreground hover:bg-sidebar-hover transition-colors" onClick={() => setSidebarOpen(false)}>
-              <KeyRound className="w-4 h-4" />
-              Доступ к урокам
             </Link>
           </nav>
 

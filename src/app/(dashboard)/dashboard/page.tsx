@@ -39,15 +39,18 @@ export default function DashboardPage() {
   const completedTopics = courses.reduce((sum, c) => sum + c.completedTopics, 0);
   const overallProgress = calculateProgress(completedTopics, totalTopics);
 
-  // Find next lesson to continue across all accessible courses
+  // Find next lesson to continue across all accessible courses (keeping the
+  // course id so the lesson opens with the right ordering/gating context).
   const nextLesson = courses
-    .flatMap((c) => c.topics)
-    .flatMap((t) =>
-      t.lessons.map((l, i) => ({
-        ...l,
-        topicTitle: t.title,
-        isCompleted: i < t.completedLessons,
-      }))
+    .flatMap((c) =>
+      c.topics.flatMap((t) =>
+        t.lessons.map((l, i) => ({
+          ...l,
+          courseId: c.id,
+          topicTitle: t.title,
+          isCompleted: i < t.completedLessons,
+        }))
+      )
     )
     .find((l) => !l.isCompleted);
 
@@ -97,7 +100,7 @@ export default function DashboardPage() {
       {/* Continue Banner */}
       {nextLesson && (
         <Link
-          href={`/lessons/${nextLesson.id}`}
+          href={`/lessons/${nextLesson.id}?course=${nextLesson.courseId}`}
           className="block mb-8 group"
         >
           <div className="bg-gradient-to-r from-accent/10 via-accent/5 to-transparent rounded-2xl border border-accent/20 p-6 hover:border-accent/40 transition-all duration-300">

@@ -173,7 +173,6 @@ export async function DELETE(request: Request) {
 
     // 5. Explicitly remove the user's data (FKs also cascade, but be deterministic)
     await adminClient.from("progress").delete().eq("user_id", userId);
-    await adminClient.from("user_lesson_access").delete().eq("user_id", userId);
     await adminClient.from("user_courses").delete().eq("user_id", userId);
 
     // 6. Delete the auth user — cascades the profile row via ON DELETE CASCADE

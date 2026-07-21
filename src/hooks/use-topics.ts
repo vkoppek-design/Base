@@ -17,7 +17,7 @@ export function useTopics(userId?: string) {
           .from("topics")
           .select("*")
           .eq("is_published", true)
-          .order("sort_order");
+          .order("title");
 
         if (topicsError) throw topicsError;
 

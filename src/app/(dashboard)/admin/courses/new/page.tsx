@@ -7,6 +7,7 @@ import { TOPIC_GRADIENTS } from "@/lib/constants";
 import { useToast } from "@/components/shared/toast-provider";
 import { ArrowLeft, Save, Loader2, Upload, X } from "lucide-react";
 import Link from "next/link";
+import CourseStructureEditor from "@/components/admin/course-structure-editor";
 
 export default function NewCoursePage() {
   const [title, setTitle] = useState("");
@@ -17,6 +18,7 @@ export default function NewCoursePage() {
   const [isPublished, setIsPublished] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [currentCourseId, setCurrentCourseId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -54,6 +56,7 @@ export default function NewCoursePage() {
   useEffect(() => {
     if (editId) {
       setIsEditing(true);
+      setCurrentCourseId(editId);
       const fetchData = async () => {
         const { data } = await supabase.from("courses").select("*").eq("id", editId).single();
         if (data) {
@@ -83,14 +86,21 @@ export default function NewCoursePage() {
     };
 
     try {
-      if (isEditing && editId) {
-        const { error } = await supabase.from("courses").update(data).eq("id", editId);
+      if (isEditing && currentCourseId) {
+        const { error } = await supabase.from("courses").update(data).eq("id", currentCourseId);
         if (error) throw error;
+        addToast("Курс сохранён", "success");
+        setLoading(false);
       } else {
-        const { error } = await supabase.from("courses").insert(data);
-        if (error) throw error;
+        const { data: created, error } = await supabase.from("courses").insert(data).select("id").single();
+        if (error || !created) throw error;
+        // Stay on the page so the structure editor (topics + lessons) unlocks
+        // immediately, without a second save.
+        setIsEditing(true);
+        setCurrentCourseId(created.id);
+        router.replace(`/admin/courses/new?edit=${created.id}`);
+        setLoading(false);
       }
-      router.push("/admin/courses");
     } catch (error) {
       addToast(error instanceof Error ? error.message : "Ошибка сохранения курса", "error");
       setLoading(false);
@@ -185,6 +195,16 @@ export default function NewCoursePage() {
           {isEditing ? "Сохранить" : "Создать"}
         </button>
       </form>
+
+      {isEditing && currentCourseId ? (
+        <div className="mt-10 pt-8 border-t border-border max-w-2xl">
+          <h2 className="text-lg font-semibold text-foreground mb-1">Структура курса</h2>
+          <p className="text-sm text-muted mb-4">Добавьте темы, задайте их порядок, и внутри каждой выберите нужные уроки и порядок их прохождения.</p>
+          <CourseStructureEditor courseId={currentCourseId} />
+        </div>
+      ) : (
+        <p className="mt-8 text-sm text-muted max-w-2xl">Сохраните курс, чтобы настроить его структуру (темы и уроки).</p>
+      )}
     </div>
   );
 }

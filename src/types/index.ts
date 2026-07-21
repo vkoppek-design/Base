@@ -30,25 +30,33 @@ export interface UserCourse {
   created_at: string;
 }
 
-export interface UserLessonAccess {
-  id: string;
-  user_id: string;
-  lesson_id: string;
-  granted_by: string | null;
-  created_at: string;
-}
-
+// A topic is now a course-independent, reusable grouping of lessons. Its
+// order/placement within a course lives on `course_topics`, and which of its
+// lessons a course includes (and in what order) lives on `course_topic_lessons`.
 export interface Topic {
   id: string;
-  course_id: string;
   title: string;
   description: string | null;
   icon: string;
   gradient: string;
-  sort_order: number;
-  block_name: string | null;
   is_published: boolean;
   created_at: string;
+}
+
+export interface CourseTopic {
+  id: string;
+  course_id: string;
+  topic_id: string;
+  sort_order: number;
+  block_name: string | null;
+  created_at: string;
+}
+
+export interface CourseTopicLesson {
+  id: string;
+  course_topic_id: string;
+  lesson_id: string;
+  sort_order: number;
 }
 
 export interface Lesson {
@@ -72,7 +80,13 @@ export interface Progress {
   created_at: string;
 }
 
+// A topic as it appears inside a specific course: carries the course-scoped
+// ordering/grouping (from course_topics) plus the ordered subset of lessons
+// the course includes (from course_topic_lessons).
 export interface TopicWithProgress extends Topic {
+  course_topic_id: string;
+  sort_order: number;
+  block_name: string | null;
   lessons: Lesson[];
   completedLessons: number;
   totalLessons: number;
