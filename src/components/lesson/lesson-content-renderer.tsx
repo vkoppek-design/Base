@@ -8,6 +8,27 @@ import { getYouTubeEmbedUrl } from "@/lib/utils";
 import { LessonFileBlock } from "@/components/lesson/lesson-materials";
 import { QuizSection } from "@/components/lesson/quiz-section";
 
+// Renders `![label|width](url)` images at their stored width — mirrors the
+// student lesson page so the preview matches exactly.
+const imgRenderer: Partial<Components> = {
+  img: ({ src, alt }) => {
+    const altStr = typeof alt === "string" ? alt : "";
+    const m = altStr.match(/\|(\d+)\s*$/);
+    const width = m ? Math.min(100, Math.max(10, parseInt(m[1], 10))) : 100;
+    const label = altStr.replace(/\|\d+\s*$/, "").trim() || "Изображение";
+    return (
+      <span className="block my-4 text-center">
+        <img
+          src={typeof src === "string" ? src : ""}
+          alt={label}
+          style={{ width: `${width}%`, maxWidth: "100%", display: "block", marginLeft: "auto", marginRight: "auto" }}
+          className="rounded-xl"
+        />
+      </span>
+    );
+  },
+};
+
 // Renders a lesson's stored Markdown (with inline <!-- FILE/QUIZ/VIDEO -->
 // markers) as an ordered sequence of text, file, quiz, and video blocks.
 // Shared by the student lesson page and the admin preview page so both
@@ -22,6 +43,7 @@ export function LessonContentRenderer({
   markdownComponents?: Partial<Components>;
 }) {
   const blocks = parseLessonContent(content);
+  const components = { ...imgRenderer, ...markdownComponents };
 
   return (
     <>
@@ -30,7 +52,7 @@ export function LessonContentRenderer({
           case "text":
             return (
               <div key={i} className="prose-dark mb-8">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
                   {block.markdown}
                 </ReactMarkdown>
               </div>

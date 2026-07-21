@@ -181,9 +181,28 @@ body {
   margin-bottom: 1em;
 }
 
+/* Tailwind's preflight resets list-style to none, which hides bullets and
+   numbers. Restore them explicitly for rendered lesson content. */
+.prose-dark ul {
+  list-style-type: disc;
+}
+
+.prose-dark ol {
+  list-style-type: decimal;
+}
+
+.prose-dark ul ul {
+  list-style-type: circle;
+}
+
+.prose-dark ul ul ul {
+  list-style-type: square;
+}
+
 .prose-dark li {
   margin-bottom: 0.25em;
   color: #D4D4D8;
+  list-style-position: outside;
 }
 
 .prose-dark blockquote {

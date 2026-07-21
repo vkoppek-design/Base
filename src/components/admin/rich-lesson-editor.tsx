@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Extension } from "@tiptap/core";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -11,6 +12,59 @@ import { useToast } from "@/components/shared/toast-provider";
 import { getYouTubeEmbedUrl } from "@/lib/utils";
 import { parseLessonContent, serializeLessonBlocks } from "@/lib/lesson-content";
 import type { LessonBlock } from "@/types";
+
+// Image with an adjustable width (percentage). Round-trips through Markdown as
+// `![|<width>](src)` so the width survives a save/load and is understood by the
+// student-facing renderer, which already reads a `|<width>` suffix in the alt.
+const ResizableImage = Image.extend({
+  addAttributes() {
+    return {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(this.parent?.() as any),
+      width: {
+        default: 100,
+        parseHTML: (el: HTMLElement) => {
+          const styleWidth = el.style?.width;
+          if (styleWidth) {
+            const n = parseInt(styleWidth, 10);
+            if (!isNaN(n)) return n;
+          }
+          const alt = el.getAttribute("alt") || "";
+          const m = alt.match(/\|(\d+)\s*$/);
+          return m ? parseInt(m[1], 10) : 100;
+        },
+        renderHTML: (attrs: { width?: number }) => ({ style: `width:${attrs.width ?? 100}%` }),
+      },
+    };
+  },
+  addStorage() {
+    return {
+      markdown: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize(state: any, node: any) {
+          const width = Number(node.attrs.width) || 100;
+          const src = String(node.attrs.src || "").replace(/[()]/g, "\\$&");
+          state.write(`![|${width}](${src})`);
+        },
+        parse: {},
+      },
+    };
+  },
+});
+
+// Tab / Shift-Tab indent list items; when not in a list, Tab is swallowed so it
+// doesn't blur the editor and jump focus to the next form control.
+const TabIndent = Extension.create({
+  name: "tabIndent",
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => this.editor.commands.sinkListItem("listItem") || true,
+      "Shift-Tab": () => this.editor.commands.liftListItem("listItem") || true,
+    };
+  },
+});
+
+const IMAGE_WIDTHS = [25, 50, 75, 100];
 import {
   Bold,
   Italic,
@@ -98,18 +152,39 @@ function TextBlockToolbar({
       >
         {uploadingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
       </button>
+
+      {editor.isActive("image") && (
+        <>
+          <div className="w-px h-4 bg-border mx-1" />
+          <span className="text-xs text-muted mr-0.5">Размер:</span>
+          {IMAGE_WIDTHS.map((w) => {
+            const active = editor.getAttributes("image").width === w;
+            return (
+              <button
+                key={w}
+                type="button"
+                onClick={() => editor.chain().focus().updateAttributes("image", { width: w }).run()}
+                className={`px-1.5 py-0.5 rounded-md text-xs transition-colors cursor-pointer ${active ? "bg-accent/20 text-accent" : "text-muted hover:text-foreground hover:bg-card-hover"}`}
+              >
+                {w}%
+              </button>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }
 
 function TextBlockEditor({ markdown, onChange }: { markdown: string; onChange: (markdown: string) => void }) {
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [, forceRender] = useState(0);
   const supabase = createClient();
   const { addToast } = useToast();
 
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: [StarterKit, Link.configure({ openOnClick: false }), Image, Markdown.configure({ html: false })],
+    extensions: [StarterKit, Link.configure({ openOnClick: false }), ResizableImage, TabIndent, Markdown.configure({ html: false })],
     content: markdown,
     editorProps: {
       attributes: {
@@ -119,6 +194,10 @@ function TextBlockEditor({ markdown, onChange }: { markdown: string; onChange: (
     onUpdate: ({ editor }) => {
       onChange((editor.storage as unknown as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown());
     },
+    // Keep the toolbar (active states, image-size controls) in sync with the
+    // current selection.
+    onSelectionUpdate: () => forceRender((n) => n + 1),
+    onTransaction: () => forceRender((n) => n + 1),
   });
 
   const handleUploadImage = () => {
@@ -141,7 +220,7 @@ function TextBlockEditor({ markdown, onChange }: { markdown: string; onChange: (
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Ошибка загрузки");
-        editor.chain().focus().setImage({ src: json.url }).run();
+        editor.chain().focus().setImage({ src: json.url, width: 100 } as { src: string }).run();
       } catch (err) {
         addToast(err instanceof Error ? err.message : "Не удалось загрузить изображение", "error");
       } finally {

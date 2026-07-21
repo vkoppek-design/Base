@@ -16,6 +16,10 @@ export default function NewLessonPage() {
   const [isPublished, setIsPublished] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  // Gate the rich editor until existing content has loaded — it initializes
+  // its blocks from `content` at mount, so mounting it before the async fetch
+  // resolves would leave it empty (and a subsequent save would wipe the lesson).
+  const [contentLoaded, setContentLoaded] = useState(false);
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -23,7 +27,10 @@ export default function NewLessonPage() {
   const editId = searchParams.get("edit");
 
   useEffect(() => {
-    if (!editId) return;
+    if (!editId) {
+      setContentLoaded(true);
+      return;
+    }
     setIsEditing(true);
     setCurrentLessonId(editId);
     supabase.from("lessons").select("*").eq("id", editId).single().then(({ data: lessonData }: { data: Lesson | null }) => {
@@ -34,6 +41,7 @@ export default function NewLessonPage() {
         setDurationMinutes(lessonData.duration_minutes);
         setIsPublished(lessonData.is_published);
       }
+      setContentLoaded(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
@@ -91,7 +99,18 @@ export default function NewLessonPage() {
               </Link>
             )}
           </div>
-          <RichLessonEditor value={content} onChange={setContent} lessonId={currentLessonId} />
+          {contentLoaded ? (
+            <RichLessonEditor
+              key={currentLessonId ?? "new"}
+              value={content}
+              onChange={setContent}
+              lessonId={currentLessonId}
+            />
+          ) : (
+            <div className="flex items-center justify-center py-10 rounded-xl bg-input border border-border">
+              <Loader2 className="w-5 h-5 animate-spin text-muted" />
+            </div>
+          )}
           {!currentLessonId && (
             <p className="text-xs text-muted mt-2">Сохраните урок, чтобы прикреплять файлы и тесты, и открыть предпросмотр.</p>
           )}
