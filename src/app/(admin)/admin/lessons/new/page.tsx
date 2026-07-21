@@ -3,19 +3,17 @@
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Topic } from "@/types";
 import { ArrowLeft, Save, Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import RichLessonEditor from "@/components/admin/rich-lesson-editor";
+import type { Lesson } from "@/types";
 
 export default function NewLessonPage() {
   const [title, setTitle] = useState("");
-  const [topicId, setTopicId] = useState("");
   const [content, setContent] = useState("");
   const [sortOrder, setSortOrder] = useState(0);
   const [durationMinutes, setDurationMinutes] = useState(0);
   const [isPublished, setIsPublished] = useState(false);
-  const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null);
@@ -25,31 +23,18 @@ export default function NewLessonPage() {
   const editId = searchParams.get("edit");
 
   useEffect(() => {
-    const fetchData = async () => {
-      const { data: topicsData } = await supabase.from("topics").select("*").order("sort_order");
-      if (topicsData) {
-        setTopics(topicsData);
-        if (topicsData.length > 0 && !topicId) {
-          setTopicId(topicsData[0].id);
-        }
+    if (!editId) return;
+    setIsEditing(true);
+    setCurrentLessonId(editId);
+    supabase.from("lessons").select("*").eq("id", editId).single().then(({ data: lessonData }: { data: Lesson | null }) => {
+      if (lessonData) {
+        setTitle(lessonData.title);
+        setContent(lessonData.content || "");
+        setSortOrder(lessonData.sort_order);
+        setDurationMinutes(lessonData.duration_minutes);
+        setIsPublished(lessonData.is_published);
       }
-
-      if (editId) {
-        setIsEditing(true);
-        setCurrentLessonId(editId);
-        const { data: lessonData } = await supabase.from("lessons").select("*").eq("id", editId).single();
-        if (lessonData) {
-          setTitle(lessonData.title);
-          setTopicId(lessonData.topic_id);
-          setContent(lessonData.content || "");
-          setSortOrder(lessonData.sort_order);
-          setDurationMinutes(lessonData.duration_minutes);
-          setIsPublished(lessonData.is_published);
-        }
-      }
-    };
-
-    fetchData();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId]);
 
@@ -57,19 +42,14 @@ export default function NewLessonPage() {
     e.preventDefault();
     setLoading(true);
 
-    const data = {
-      title,
-      topic_id: topicId,
-      content,
-      sort_order: sortOrder,
-      duration_minutes: durationMinutes,
-      is_published: isPublished,
-    };
-
     if (isEditing && currentLessonId) {
+      // topic_id is intentionally omitted — assigning a lesson to a topic
+      // happens from the topic editor, not here.
+      const data = { title, content, sort_order: sortOrder, duration_minutes: durationMinutes, is_published: isPublished };
       await supabase.from("lessons").update(data).eq("id", currentLessonId);
       setLoading(false);
     } else {
+      const data = { title, content, sort_order: sortOrder, duration_minutes: durationMinutes, is_published: isPublished, topic_id: null };
       const { data: created, error } = await supabase.from("lessons").insert(data).select("id").single();
       setLoading(false);
       if (error || !created) return;
@@ -90,17 +70,10 @@ export default function NewLessonPage() {
       <h1 className="text-2xl font-bold text-foreground mb-8">{isEditing ? 'Редактировать урок' : 'Новый урок'}</h1>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">Название</label>
-            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Название урока" required className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">Тема</label>
-            <select value={topicId} onChange={e => setTopicId(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground transition-colors">
-              {topics.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
-            </select>
-          </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1.5">Название</label>
+          <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Название урока" required className="w-full px-4 py-3 rounded-xl bg-input border border-border focus:border-accent focus:ring-1 focus:ring-accent outline-none text-sm text-foreground placeholder:text-muted-foreground transition-colors" />
+          <p className="text-xs text-muted mt-1.5">В какую тему добавить урок — выбирается позже, при редактировании темы.</p>
         </div>
 
         <div>
@@ -143,7 +116,7 @@ export default function NewLessonPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={loading || !title || !topicId} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
+          <button type="submit" disabled={loading || !title} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-accent-foreground font-medium text-sm hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer glow-accent">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {isEditing ? 'Сохранить' : 'Создать'}
           </button>

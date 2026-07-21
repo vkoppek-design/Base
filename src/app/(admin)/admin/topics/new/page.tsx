@@ -4,9 +4,103 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { TOPIC_GRADIENTS } from "@/lib/constants";
-import type { Course } from "@/types";
-import { ArrowLeft, Save, Loader2 } from "lucide-react";
+import { useToast } from "@/components/shared/toast-provider";
+import type { Course, Lesson } from "@/types";
+import { ArrowLeft, Save, Loader2, ArrowUp, ArrowDown, X, Plus } from "lucide-react";
 import Link from "next/link";
+
+function TopicLessons({ topicId }: { topicId: string }) {
+  const [assigned, setAssigned] = useState<Lesson[]>([]);
+  const [available, setAvailable] = useState<Lesson[]>([]);
+  const [pickedId, setPickedId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const supabase = createClient();
+  const { addToast } = useToast();
+
+  const fetchLessons = async () => {
+    const [assignedRes, availableRes] = await Promise.all([
+      supabase.from("lessons").select("*").eq("topic_id", topicId).order("sort_order"),
+      supabase.from("lessons").select("*").or(`topic_id.is.null,topic_id.neq.${topicId}`).order("title"),
+    ]);
+    setAssigned(assignedRes.data || []);
+    setAvailable(availableRes.data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchLessons();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicId]);
+
+  const addLesson = async () => {
+    if (!pickedId) return;
+    const nextSortOrder = assigned.length ? Math.max(...assigned.map((l) => l.sort_order)) + 1 : 0;
+    const { error } = await supabase.from("lessons").update({ topic_id: topicId, sort_order: nextSortOrder }).eq("id", pickedId);
+    if (error) {
+      addToast("Не удалось добавить урок", "error");
+      return;
+    }
+    setPickedId("");
+    fetchLessons();
+  };
+
+  const removeLesson = async (id: string) => {
+    await supabase.from("lessons").update({ topic_id: null }).eq("id", id);
+    fetchLessons();
+  };
+
+  const moveLesson = async (index: number, direction: -1 | 1) => {
+    const other = assigned[index + direction];
+    if (!other) return;
+    const current = assigned[index];
+    await Promise.all([
+      supabase.from("lessons").update({ sort_order: other.sort_order }).eq("id", current.id),
+      supabase.from("lessons").update({ sort_order: current.sort_order }).eq("id", other.id),
+    ]);
+    fetchLessons();
+  };
+
+  if (loading) return <Loader2 className="w-4 h-4 animate-spin text-muted" />;
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-foreground mb-1.5">Уроки в теме</label>
+      <div className="space-y-2 mb-3">
+        {assigned.length === 0 ? (
+          <p className="text-sm text-muted">В этой теме пока нет уроков</p>
+        ) : (
+          assigned.map((lesson, i) => (
+            <div key={lesson.id} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-input border border-border">
+              <span className="flex-1 text-sm text-foreground truncate">{lesson.title}</span>
+              <button type="button" onClick={() => moveLesson(i, -1)} disabled={i === 0} className="p-1.5 rounded-lg text-muted hover:text-foreground disabled:opacity-30 cursor-pointer">
+                <ArrowUp className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" onClick={() => moveLesson(i, 1)} disabled={i === assigned.length - 1} className="p-1.5 rounded-lg text-muted hover:text-foreground disabled:opacity-30 cursor-pointer">
+                <ArrowDown className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" onClick={() => removeLesson(lesson.id)} className="p-1.5 rounded-lg text-muted hover:text-error hover:bg-error/10 cursor-pointer">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {available.length > 0 && (
+        <div className="flex gap-2">
+          <select value={pickedId} onChange={(e) => setPickedId(e.target.value)} className="flex-1 px-4 py-2.5 rounded-xl bg-input border border-border focus:border-accent outline-none text-sm text-foreground">
+            <option value="">Выберите урок для добавления…</option>
+            {available.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
+          </select>
+          <button type="button" onClick={addLesson} disabled={!pickedId} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-input border border-border text-sm text-foreground hover:border-accent transition-colors disabled:opacity-50 cursor-pointer">
+            <Plus className="w-4 h-4" />
+            Добавить
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const ICONS = ["MessageSquareText", "Bot", "Image", "Code", "BookOpen", "Layers", "Brain", "Sparkles", "Lightbulb", "Palette"];
 
@@ -138,6 +232,12 @@ export default function NewTopicPage() {
           {isEditing ? 'Сохранить' : 'Создать'}
         </button>
       </form>
+
+      {isEditing && editId && (
+        <div className="mt-8 pt-8 border-t border-border">
+          <TopicLessons topicId={editId} />
+        </div>
+      )}
     </div>
   );
 }

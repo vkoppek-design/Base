@@ -57,7 +57,7 @@ export default function LessonsListPage() {
       ) : lessons.length === 0 ? (
         <div className="text-center py-16">
           <p className="text-foreground font-medium mb-1">Уроков пока нет</p>
-          <p className="text-sm text-muted mb-4">Сначала создайте тему, затем добавьте уроки</p>
+          <p className="text-sm text-muted mb-4">Создайте первый урок, а затем добавьте его в тему</p>
         </div>
       ) : (
         <div className="space-y-2">

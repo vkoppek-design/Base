@@ -53,7 +53,7 @@ export interface Topic {
 
 export interface Lesson {
   id: string;
-  topic_id: string;
+  topic_id: string | null;
   title: string;
   content: string | null;
   sort_order: number;
