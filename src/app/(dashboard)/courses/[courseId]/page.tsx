@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/use-user";
 import { useCourses } from "@/hooks/use-courses";
@@ -22,7 +22,6 @@ import {
   ArrowRight,
   Sparkles,
   Lock,
-  Clock,
 } from "lucide-react";
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -52,6 +51,8 @@ function TopicCardSkeleton() {
 
 export default function CoursePage({ params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = use(params);
+  const searchParams = useSearchParams();
+  const selectedTopicId = searchParams.get("topic");
   const { user, profile } = useUser();
   const isAdmin = profile?.role === "admin";
   const { courses, loading } = useCourses(user?.id);
@@ -111,16 +112,21 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
 
   const progress = calculateProgress(course.completedTopics, course.totalTopics);
 
-  // Flat list of lessons in course order
+  // Flat list of lessons in course order (basis for sequential unlock).
   const allLessons = flattenCourseLessons(course);
   const lessonHref = (lessonId: string) => `/lessons/${lessonId}?course=${course.id}`;
+  const topicHref = (topicId: string) => `/courses/${course.id}?topic=${topicId}`;
   const topicTitleByLesson = (lessonId: string) =>
     course.topics.find((t) => t.lessons.some((l) => l.id === lessonId))?.title || "";
+  const globalIndexOf = (lessonId: string) => allLessons.findIndex((l) => l.id === lessonId);
 
   // First lesson that is both unlocked and not yet completed — "continue here".
   const nextLesson = allLessons.find(
     (l, i) => isUnlockedAt(i, allLessons) && !completedIds.has(l.id)
   );
+
+  // Drill-in: the topic the student opened, if any.
+  const selectedTopic = selectedTopicId ? course.topics.find((t) => t.id === selectedTopicId) : null;
 
   return (
     <div className="p-4 lg:p-8 max-w-6xl mx-auto animate-fade-in">
@@ -155,17 +161,17 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
           
           <div className="flex flex-col items-center justify-center p-6 bg-background rounded-2xl border border-border min-w-[160px]">
             <span className="text-3xl font-bold text-foreground mb-1">
-              {course.sequential_access ? allLessons.length : course.totalTopics}
+              {course.totalTopics}
             </span>
             <span className="text-sm text-muted">
-              {course.sequential_access ? "Занятий всего" : "Модулей всего"}
+              {course.totalTopics === 1 ? "Тема" : "Тем всего"}
             </span>
           </div>
         </div>
       </div>
 
       {/* Continue Banner */}
-      {nextLesson && (
+      {!selectedTopic && nextLesson && (
         <Link
           href={lessonHref(nextLesson.id)}
           className="block mb-8 group"
@@ -188,21 +194,34 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
         </Link>
       )}
 
-      {course.sequential_access ? (
-        // Sequential course lesson view (8 premium lesson tiles)
+      {selectedTopic ? (
+        // ---- Topic drill-in: this topic's lessons, gated by course order ----
         <div className="space-y-6">
-          <h2 className="text-xl font-semibold text-foreground mb-6">Программа курса</h2>
-          {allLessons.length === 0 ? (
+          <Link
+            href={`/courses/${course.id}`}
+            className="inline-flex items-center gap-2 text-sm text-muted hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Ко всем темам
+          </Link>
+          <div>
+            <h2 className="text-xl font-semibold text-foreground">{selectedTopic.title}</h2>
+            {selectedTopic.description && (
+              <p className="text-sm text-muted mt-1">{selectedTopic.description}</p>
+            )}
+          </div>
+
+          {selectedTopic.lessons.length === 0 ? (
             <div className="text-center py-16">
               <div className="w-16 h-16 rounded-2xl bg-card flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-muted" />
               </div>
-              <p className="text-foreground font-medium mb-1">Уроков пока нет</p>
+              <p className="text-foreground font-medium mb-1">В этой теме пока нет уроков</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {allLessons.map((lesson, idx) => {
-                const isUnlocked = isUnlockedAt(idx, allLessons);
+              {selectedTopic.lessons.map((lesson, idx) => {
+                const isUnlocked = isUnlockedAt(globalIndexOf(lesson.id), allLessons);
                 const isCompleted = completedIds.has(lesson.id);
 
                 const cardContent = (
@@ -211,33 +230,16 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                       ? "border-border hover:border-border-hover hover:bg-card-hover hover-lift cursor-pointer"
                       : "border-border/50 opacity-90 cursor-not-allowed"
                   }`}>
-                    {/* Background glow overlay for premium feel */}
-                    {isUnlocked && (
-                      <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${
-                        isCompleted ? "from-success" : "from-accent"
-                      } to-transparent opacity-5 rounded-full blur-2xl -mr-10 -mt-10`} />
-                    )}
-
                     <div className="relative z-10 flex-1">
                       <div className="flex items-center gap-4">
                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110 ${
-                          isCompleted
-                            ? "bg-success/10 text-success"
-                            : isUnlocked
-                            ? "bg-accent/10 text-accent"
-                            : "bg-success/10 text-success border border-success/20"
+                          isCompleted ? "bg-success/10 text-success" : isUnlocked ? "bg-accent/10 text-accent" : "bg-card-hover text-muted"
                         }`}>
-                          {isCompleted ? (
-                            <CheckCircle2 className="w-6 h-6" />
-                          ) : isUnlocked ? (
-                            <PlayCircle className="w-6 h-6" />
-                          ) : (
-                            <Lock className="w-6 h-6 text-success" />
-                          )}
+                          {isCompleted ? <CheckCircle2 className="w-6 h-6" /> : isUnlocked ? <PlayCircle className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <span className={`text-xs font-semibold uppercase tracking-wider mb-1 block ${
-                            isCompleted ? "text-success" : isUnlocked ? "text-accent" : "text-success"
+                            isCompleted ? "text-success" : isUnlocked ? "text-accent" : "text-muted"
                           }`}>
                             Урок {idx + 1}
                           </span>
@@ -247,10 +249,9 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                         </div>
                       </div>
                     </div>
-
                     <div className="flex items-center justify-end mt-4 pt-4 border-t border-border/50 relative z-10">
                       <span className={`text-xs font-semibold ${
-                        isCompleted ? "text-success" : isUnlocked ? "text-accent" : "text-success"
+                        isCompleted ? "text-success" : isUnlocked ? "text-accent" : "text-muted"
                       }`}>
                         {isCompleted ? "Пройден" : isUnlocked ? "Доступен" : "Заблокирован"}
                       </span>
@@ -272,16 +273,16 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
           )}
         </div>
       ) : (
-        // Traditional Topics Grid
+        // ---- Topics overview: click a topic to drill into its lessons ----
         <>
-          <h2 className="text-xl font-semibold text-foreground mb-6">Модули программы</h2>
-          
+          <h2 className="text-xl font-semibold text-foreground mb-6">Программа курса</h2>
+
           {course.topics.length === 0 ? (
             <div className="text-center py-16">
               <div className="w-16 h-16 rounded-2xl bg-card flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-muted" />
               </div>
-              <p className="text-foreground font-medium mb-1">В этом курсе пока нет модулей</p>
+              <p className="text-foreground font-medium mb-1">В этом курсе пока нет тем</p>
               <p className="text-sm text-muted">Контент скоро появится</p>
             </div>
           ) : (
@@ -305,26 +306,9 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                   )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {blockTopics.map((topic) => {
-                      const topicProgress = calculateProgress(
-                        topic.completedLessons,
-                        topic.totalLessons
-                      );
-                      const firstIncomplete = topic.lessons.find(
-                        (_, i) => i >= topic.completedLessons
-                      );
-
+                      const topicProgress = calculateProgress(topic.completedLessons, topic.totalLessons);
                       return (
-                        <Link
-                          key={topic.id}
-                          href={
-                            firstIncomplete
-                              ? lessonHref(firstIncomplete.id)
-                              : topic.lessons[0]
-                              ? lessonHref(topic.lessons[0].id)
-                              : `/courses/${course.id}`
-                          }
-                          className="group"
-                        >
+                        <Link key={topic.id} href={topicHref(topic.id)} className="group">
                           <div className="bg-card rounded-2xl border border-border p-6 hover:border-border-hover hover:bg-card-hover transition-all duration-300 hover-lift relative overflow-hidden">
                             <div className="flex items-start gap-4 mb-5 relative z-10">
                               <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center text-accent shrink-0 group-hover:scale-110 transition-transform duration-300">
@@ -338,15 +322,12 @@ export default function CoursePage({ params }: { params: Promise<{ courseId: str
                                   {topic.description}
                                 </p>
                               </div>
+                              <ArrowRight className="w-5 h-5 text-muted group-hover:text-accent group-hover:translate-x-1 transition-all shrink-0" />
                             </div>
 
-                            {/* Progress Bar */}
                             <div className="mb-3 relative z-10">
                               <div className="w-full h-2 bg-border rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-accent rounded-full transition-all duration-500"
-                                  style={{ width: `${topicProgress}%` }}
-                                />
+                                <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${topicProgress}%` }} />
                               </div>
                             </div>
 
